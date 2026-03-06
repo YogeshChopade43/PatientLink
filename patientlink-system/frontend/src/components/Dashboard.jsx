@@ -138,7 +138,8 @@ const Dashboard = () => {
       morning: med.morning,
       evening: med.evening,
       night: med.night,
-      duration_days: med.duration_days
+      duration_days: med.duration_days,
+      meal_time: med.meal_time || ''
     })) || []);
   };
 
@@ -183,7 +184,8 @@ const Dashboard = () => {
           morning: med.morning,
           evening: med.evening,
           night: med.night,
-          duration_days: parseInt(med.duration_days) || 7
+          duration_days: parseInt(med.duration_days) || 7,
+          meal_time: med.meal_time || ''
         }))
       };
 
@@ -596,10 +598,16 @@ const Dashboard = () => {
                                       <span className="font-medium text-gray-800">{med.medicine_name}</span>
                                       <span className="text-xs text-gray-500">{med.duration_days} days</span>
                                     </div>
-                                    <div className="flex gap-2 mt-1">
+                                    <div className="flex flex-wrap gap-2 mt-1">
                                       {med.morning && <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded">Morning</span>}
                                       {med.evening && <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded">Evening</span>}
                                       {med.night && <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded">Night</span>}
+                                      {med.meal_time === 'before_meal' && (
+                                        <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded">Before meal</span>
+                                      )}
+                                      {med.meal_time === 'after_meal' && (
+                                        <span className="text-xs bg-cyan-100 text-cyan-700 px-2 py-0.5 rounded">After meal</span>
+                                      )}
                                     </div>
                                   </div>
                                 ))}
