@@ -1,0 +1,167 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom Design System */
+@layer base {
+  :root {
+    /* Primary Colors - Medical Teal */
+    --color-primary-50: #f0fdfa;
+    --color-primary-100: #ccfbf1;
+    --color-primary-200: #99f6e4;
+    --color-primary-300: #5eead4;
+    --color-primary-400: #2dd4bf;
+    --color-primary-500: #14b8a6;
+    --color-primary-600: #0d9488;
+    --color-primary-700: #0f766e;
+    --color-primary-800: #115e59;
+    --color-primary-900: #134e4a;
+    
+    /* Secondary Colors - Warm Coral */
+    --color-secondary-50: #fff1f2;
+    --color-secondary-100: #ffe4e6;
+    --color-secondary-200: #fecdd3;
+    --color-secondary-300: #fda4af;
+    --color-secondary-400: #fb7185;
+    --color-secondary-500: #f43f5e;
+    --color-secondary-600: #e11d48;
+    --color-secondary-700: #be123c;
+    --color-secondary-800: #9f1239;
+    --color-secondary-900: #881337;
+  }
+  
+  html {
+    scroll-behavior: smooth;
+  }
+  
+  body {
+    @apply bg-gradient-to-br from-slate-50 via-white to-teal-50 min-h-screen;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+  
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  
+  ::-webkit-scrollbar-track {
+    @apply bg-gray-100 rounded-full;
+  }
+  
+  ::-webkit-scrollbar-thumb {
+    @apply bg-teal-500 rounded-full hover:bg-teal-600 transition-colors;
+  }
+}
+
+@layer components {
+  /* Glass Card Effect */
+  .glass-card {
+    @apply bg-white/80 backdrop-blur-lg border border-white/20 shadow-xl;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+  }
+  
+  /* Primary Button */
+  .btn-primary {
+    @apply bg-gradient-to-r from-teal-500 to-teal-600 hover:from-teal-600 hover:to-teal-700 
+           text-white font-semibold py-3 px-6 rounded-xl shadow-lg shadow-teal-500/25
+           transform transition-all duration-200 hover:scale-[1.02] hover:shadow-xl
+           focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2
+           disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100;
+  }
+  
+  /* Secondary Button */
+  .btn-secondary {
+    @apply bg-white border-2 border-gray-200 hover:border-teal-500 hover:text-teal-600
+           text-gray-700 font-semibold py-3 px-6 rounded-xl
+           transform transition-all duration-200 hover:scale-[1.02]
+           focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2;
+  }
+  
+  /* Input Field */
+  .input-field {
+    @apply w-full px-4 py-3 rounded-xl border-2 border-gray-200 bg-white/50
+           focus:border-teal-500 focus:bg-white focus:outline-none focus:ring-2 
+           focus:ring-teal-500/20 transition-all duration-200 placeholder-gray-400;
+  }
+  
+  /* Card Hover Effect */
+  .card-hover {
+    @apply transition-all duration-300 hover:scale-[1.02] hover:shadow-2xl;
+  }
+  
+  /* Gradient Text */
+  .text-gradient {
+    @apply bg-gradient-to-r from-teal-600 to-teal-400 bg-clip-text text-transparent;
+  }
+  
+  /* Shimmer Loading Effect */
+  .shimmer {
+    @apply relative overflow-hidden;
+  }
+  
+  .shimmer::after {
+    content: '';
+    @apply absolute inset-0 -translate-x-full;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(255, 255, 255, 0.4),
+      transparent
+    );
+    animation: shimmer 2s infinite;
+  }
+  
+  @keyframes shimmer {
+    100% {
+      transform: translateX(100%);
+    }
+  }
+}
+
+@layer utilities {
+  /* Animation Delays */
+  .animation-delay-100 {
+    animation-delay: 100ms;
+  }
+  .animation-delay-200 {
+    animation-delay: 200ms;
+  }
+  .animation-delay-300 {
+    animation-delay: 300ms;
+  }
+  .animation-delay-400 {
+    animation-delay: 400ms;
+  }
+  .animation-delay-500 {
+    animation-delay: 500ms;
+  }
+  
+  /* Float Animation */
+  @keyframes float {
+    0%, 100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-10px);
+    }
+  }
+  
+  .animate-float {
+    animation: float 3s ease-in-out infinite;
+  }
+  
+  /* Pulse Glow */
+  @keyframes pulse-glow {
+    0%, 100% {
+      box-shadow: 0 0 20px rgba(20, 184, 166, 0.3);
+    }
+    50% {
+      box-shadow: 0 0 40px rgba(20, 184, 166, 0.6);
+    }
+  }
+  
+  .animate-pulse-glow {
+    animation: pulse-glow 2s ease-in-out infinite;
+  }
+}
