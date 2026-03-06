@@ -11,6 +11,15 @@ const Dashboard = () => {
   const [patients, setPatients] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [medicineFilter, setMedicineFilter] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [reminderStatus, setReminderStatus] = useState('');
+  const [activeOnly, setActiveOnly] = useState(true);
+  const [page, setPage] = useState(1);
+  const [limit] = useState(20);
+  const [totalPatients, setTotalPatients] = useState(0);
+  const [reportSummary, setReportSummary] = useState(null);
+  const [retryQueue, setRetryQueue] = useState([]);
   const [editingPatient, setEditingPatient] = useState(null);
   const [expandedPatient, setExpandedPatient] = useState(null);
   const [editForm, setEditForm] = useState({
@@ -33,14 +42,28 @@ const Dashboard = () => {
       return;
     }
     fetchPatients();
-  }, [token, navigate]);
+    fetchReportSummary();
+    fetchRetryQueue();
+  }, [token, navigate, page, searchTerm, medicineFilter, fromDate, reminderStatus, activeOnly]);
 
   const fetchPatients = async () => {
     try {
       const response = await axios.get(`${API_URL}/`, {
+        params: {
+          skip: (page - 1) * limit,
+          limit,
+          search: searchTerm || undefined,
+          medicine: medicineFilter || undefined,
+          date_from: fromDate || undefined,
+          reminder_status: reminderStatus || undefined,
+          active_only: activeOnly,
+        },
         headers: { Authorization: `Bearer ${token}` }
       });
-      setPatients(response.data);
+      const payload = response.data || {};
+      const items = Array.isArray(payload) ? payload : (payload.items || []);
+      setPatients(items);
+      setTotalPatients(Array.isArray(payload) ? items.length : (payload.total || 0));
     } catch (error) {
       console.error('Error fetching patients:', error);
       if (error.response?.status === 401) {
@@ -49,6 +72,31 @@ const Dashboard = () => {
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchReportSummary = async () => {
+    try {
+      const base = API_URL.replace('/patients', '/reports');
+      const response = await axios.get(`${base}/summary`, {
+        params: { period: 'weekly' },
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setReportSummary(response.data);
+    } catch (error) {
+      setReportSummary(null);
+    }
+  };
+
+  const fetchRetryQueue = async () => {
+    try {
+      const base = API_URL.replace('/patients', '/whatsapp');
+      const response = await axios.get(`${base}/retry-queue`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setRetryQueue(response.data || []);
+    } catch (error) {
+      setRetryQueue([]);
     }
   };
 
@@ -92,6 +140,64 @@ const Dashboard = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     navigate('/login');
+  };
+
+  const handleExportReport = async () => {
+    try {
+      const base = API_URL.replace('/patients', '/reports');
+      const response = await axios.get(`${base}/export/csv`, {
+        headers: { Authorization: `Bearer ${token}` },
+        responseType: 'blob'
+      });
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `weekly_report_${new Date().toISOString().split('T')[0]}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success('Report exported');
+    } catch (error) {
+      toast.error('Failed to export report');
+    }
+  };
+
+  const handleBackupExport = async () => {
+    try {
+      const base = API_URL.replace('/patients', '/backup');
+      const response = await axios.get(`${base}/export`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const blob = new Blob([JSON.stringify(response.data, null, 2)], { type: 'application/json' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `patient_backup_${new Date().toISOString().split('T')[0]}.json`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success('Backup exported');
+    } catch (error) {
+      toast.error('Backup export failed');
+    }
+  };
+
+  const handleBackupRestore = async (file) => {
+    try {
+      const text = await file.text();
+      const payload = JSON.parse(text);
+      const base = API_URL.replace('/patients', '/backup');
+      await axios.post(`${base}/restore`, payload, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      toast.success('Backup restored');
+      fetchPatients();
+      fetchReportSummary();
+    } catch (error) {
+      toast.error('Backup restore failed');
+    }
   };
 
   const handleOpenUserManager = async () => {
@@ -158,7 +264,8 @@ const Dashboard = () => {
         morning: false,
         evening: false,
         night: false,
-        duration_days: 7
+        duration_days: 7,
+        meal_time: ''
       }
     ]);
   };
@@ -331,6 +438,38 @@ const Dashboard = () => {
                 <span className="hidden sm:inline">Export</span>
               </motion.button>
 
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={handleExportReport}
+                className="flex items-center space-x-2 bg-blue-500 text-white px-4 py-2.5 rounded-xl font-medium shadow-lg shadow-blue-500/30 hover:shadow-blue-500/50 transition-all"
+              >
+                <span className="hidden sm:inline">Weekly Report</span>
+              </motion.button>
+
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={handleBackupExport}
+                className="flex items-center space-x-2 bg-purple-500 text-white px-4 py-2.5 rounded-xl font-medium shadow-lg shadow-purple-500/30 hover:shadow-purple-500/50 transition-all"
+              >
+                <span className="hidden sm:inline">Backup</span>
+              </motion.button>
+
+              <label className="flex items-center space-x-2 bg-purple-100 text-purple-700 px-3 py-2.5 rounded-xl font-medium cursor-pointer">
+                <span className="hidden sm:inline">Restore</span>
+                <input
+                  type="file"
+                  accept=".json,application/json"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) handleBackupRestore(file);
+                    e.target.value = '';
+                  }}
+                />
+              </label>
+
               <Link to="/add-patient">
                 <motion.button
                   whileHover={{ scale: 1.05 }}
@@ -362,6 +501,32 @@ const Dashboard = () => {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Reports / Queue */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+          <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+            <h3 className="text-lg font-semibold text-gray-800 mb-2">Weekly Report</h3>
+            {reportSummary ? (
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <p className="text-gray-500">Patients: <span className="text-gray-800 font-semibold">{reportSummary.total_patients}</span></p>
+                <p className="text-gray-500">Active: <span className="text-gray-800 font-semibold">{reportSummary.active_patients}</span></p>
+                <p className="text-gray-500">Medicines: <span className="text-gray-800 font-semibold">{reportSummary.total_medicines}</span></p>
+                <p className="text-gray-500">Failed msgs: <span className="text-red-600 font-semibold">{reportSummary.message_failed}</span></p>
+              </div>
+            ) : (
+              <p className="text-gray-500 text-sm">Report not available yet.</p>
+            )}
+          </div>
+          <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+            <h3 className="text-lg font-semibold text-gray-800 mb-2">Retry Queue</h3>
+            <p className="text-gray-500 text-sm">Failed WhatsApp attempts: <span className="text-red-600 font-semibold">{retryQueue.length}</span></p>
+            {retryQueue.slice(0, 3).map((item) => (
+              <p key={item.id} className="text-xs text-gray-600 mt-1 truncate">
+                {item.phone_number} - {item.error_reason || 'Unknown failure'}
+              </p>
+            ))}
+          </div>
+        </div>
+
         {/* Stats & Search */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           {/* Stats Cards */}
@@ -374,7 +539,7 @@ const Dashboard = () => {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-gray-500 text-sm">Total Patients</p>
-                <p className="text-3xl font-bold text-gray-800 mt-1">{patients.length}</p>
+                <p className="text-3xl font-bold text-gray-800 mt-1">{totalPatients}</p>
               </div>
               <div className="w-14 h-14 bg-rose-100 rounded-2xl flex items-center justify-center">
                 <svg className="w-7 h-7 text-rose-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -437,19 +602,55 @@ const Dashboard = () => {
           transition={{ delay: 0.4 }}
           className="mb-8"
         >
-          <div className="relative max-w-xl">
-            <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-              <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
+          <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
+            <div className="relative md:col-span-2">
+              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+              </div>
+              <input
+                type="text"
+                placeholder="Search name/phone"
+                value={searchTerm}
+                onChange={(e) => { setPage(1); setSearchTerm(e.target.value); }}
+                className="w-full pl-12 pr-4 py-3.5 bg-white border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 transition-all shadow-sm"
+              />
             </div>
-            <input
-              type="text"
-              placeholder="Search patients by name or WhatsApp..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-12 pr-4 py-3.5 bg-white border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 transition-all shadow-sm"
-            />
+            <input type="text" placeholder="Medicine" value={medicineFilter} onChange={(e) => { setPage(1); setMedicineFilter(e.target.value); }} className="input-field" />
+            <input type="date" value={fromDate} onChange={(e) => { setPage(1); setFromDate(e.target.value); }} className="input-field" />
+            <select value={reminderStatus} onChange={(e) => { setPage(1); setReminderStatus(e.target.value); }} className="input-field">
+              <option value="">All reminder states</option>
+              <option value="queued">Queued</option>
+              <option value="sent">Sent</option>
+              <option value="delivered">Delivered</option>
+              <option value="read">Read</option>
+              <option value="failed">Failed</option>
+            </select>
+          </div>
+          <div className="mt-3 flex items-center justify-between">
+            <label className="text-sm text-gray-600 flex items-center gap-2">
+              <input type="checkbox" checked={activeOnly} onChange={(e) => { setPage(1); setActiveOnly(e.target.checked); }} />
+              Show only active (not deleted)
+            </label>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  setSearchTerm('');
+                  setMedicineFilter('');
+                  setFromDate('');
+                  setReminderStatus('');
+                  setActiveOnly(true);
+                  setPage(1);
+                }}
+                className="px-3 py-1.5 bg-gray-100 rounded-lg text-sm"
+              >
+                Reset Filters
+              </button>
+              <button onClick={() => setPage((p) => Math.max(1, p - 1))} className="px-3 py-1.5 bg-gray-100 rounded-lg text-sm">Prev</button>
+              <span className="text-sm text-gray-600">Page {page}</span>
+              <button onClick={() => setPage((p) => ((p * limit) < totalPatients ? p + 1 : p))} className="px-3 py-1.5 bg-gray-100 rounded-lg text-sm">Next</button>
+            </div>
           </div>
         </motion.div>
 
@@ -804,6 +1005,17 @@ const Dashboard = () => {
                               onChange={(e) => handleEditMedicineChange(medicine.id, 'duration_days', e.target.value)}
                               className="input-field"
                             />
+                          </div>
+                          <div className="mt-2">
+                            <select
+                              value={medicine.meal_time || ''}
+                              onChange={(e) => handleEditMedicineChange(medicine.id, 'meal_time', e.target.value)}
+                              className="input-field"
+                            >
+                              <option value="">Any time</option>
+                              <option value="before_meal">Before meal</option>
+                              <option value="after_meal">After meal</option>
+                            </select>
                           </div>
                           <div className="flex flex-wrap gap-2 mt-2">
                             {['morning', 'evening', 'night'].map((time) => (

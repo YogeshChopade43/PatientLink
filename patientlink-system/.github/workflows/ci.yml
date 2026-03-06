@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: patientlink-system
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install API deps
+        run: pip install -r api/requirements.txt
+      - name: Install Auth deps
+        run: pip install -r auth_service/requirements.txt
+      - name: Python compile checks
+        run: |
+          python -m py_compile api/main.py api/models.py api/schemas.py api/tasks.py api/celery_app.py api/whatsapp_service.py
+          python -m py_compile auth_service/views.py auth_service/serializers.py auth_service/settings.py auth_service/settings_production.py
+      - name: Django migration drift check
+        env:
+          PYTHONPATH: ${{ github.workspace }}/patientlink-system
+        run: python -m django makemigrations --check --dry-run --settings=auth_service.settings
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: patientlink-system/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install
+        run: npm ci
+      - name: Build
+        run: npm run build

@@ -7,6 +7,12 @@ from datetime import timedelta
 from pathlib import Path
 import secrets
 from urllib.parse import urlparse
+try:
+    import sentry_sdk
+    from sentry_sdk.integrations.django import DjangoIntegration
+except Exception:
+    sentry_sdk = None
+    DjangoIntegration = None
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -48,6 +54,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'rest_framework_simplejwt',
+    'rest_framework_simplejwt.token_blacklist',
     'corsheaders',
     'auth_service',
 ]
@@ -365,3 +372,15 @@ LOGGING = {
         },
     },
 }
+
+SENTRY_DSN = os.environ.get('SENTRY_DSN', '')
+if SENTRY_DSN:
+    if not sentry_sdk or not DjangoIntegration:
+        print("WARNING: Sentry DSN set but sentry-sdk is not installed.")
+    else:
+        sentry_sdk.init(
+            dsn=SENTRY_DSN,
+            integrations=[DjangoIntegration()],
+            traces_sample_rate=float(os.environ.get('SENTRY_TRACES_SAMPLE_RATE', '0.1')),
+            send_default_pii=False,
+        )

@@ -20,6 +20,21 @@ export default defineConfig(({ mode }) => {
           target: 'http://localhost:8001',
           changeOrigin: true,
           secure: false,
+        },
+        '/reports': {
+          target: 'http://localhost:8001',
+          changeOrigin: true,
+          secure: false,
+        },
+        '/whatsapp': {
+          target: 'http://localhost:8001',
+          changeOrigin: true,
+          secure: false,
+        },
+        '/backup': {
+          target: 'http://localhost:8001',
+          changeOrigin: true,
+          secure: false,
         }
       }
     },

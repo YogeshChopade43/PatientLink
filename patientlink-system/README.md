@@ -157,6 +157,24 @@ docker-compose logs -f
 docker-compose down
 ```
 
+### Production Readiness Verification
+
+Before go-live, verify both backend services are truly ready:
+
+```powershell
+pwsh ./scripts/check_readiness.ps1
+```
+
+Expected:
+- Auth readiness endpoint: `GET /api/system/readiness/` returns `200` and `"ready": true`
+- API readiness endpoint: `GET /ops/readiness` returns `200` and `"ready": true`
+
+If readiness fails, inspect the returned `checks` object and fix those exact items (DB, Redis, backup path, WhatsApp webhook secrets, captcha/2FA dependencies).
+
+Note:
+- `ENABLE_BACKGROUND_TASKS=false` is suitable for local environments without Redis (reminders are processed directly).
+- `ENABLE_BACKGROUND_TASKS=true` is required for production queue mode (Redis + Celery worker/beat).
+
 ### Manual Production Setup
 
 1. **Build Frontend:**
@@ -200,6 +218,8 @@ docker-compose down
 - **Use HTTPS** in production (configure SSL/TLS)
 - **Secure your database** with strong passwords
 - **Review CORS settings** before deploying
+- **Set Meta webhook security vars**: `META_WEBHOOK_VERIFY_TOKEN`, `META_APP_SECRET`
+- **Set Redis/Celery vars** and keep Redis reachable from API + workers
 
 ## Testing the Complete Flow
 

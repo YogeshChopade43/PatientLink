@@ -16,6 +16,7 @@ export const AuthProvider = ({ children }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
     return !!localStorage.getItem('token');
   });
+  const [refreshToken, setRefreshToken] = useState(localStorage.getItem('refresh_token'));
 
   // API base URL
   const API_BASE_URL = import.meta.env.VITE_AUTH_API_URL || '/api';
@@ -53,11 +54,12 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const login = async (username, password) => {
+  const login = async (username, password, otp = '') => {
     try {
       const response = await axios.post(`${API_BASE_URL}/login/`, {
         username,
-        password
+        password,
+        otp
       }, {
         headers: {
           'Content-Type': 'application/json'
@@ -66,10 +68,13 @@ export const AuthProvider = ({ children }) => {
       
       const { tokens, user } = response.data;
       const accessToken = tokens.access;
+      const newRefresh = tokens.refresh;
       
       localStorage.setItem('token', accessToken);
+      if (newRefresh) localStorage.setItem('refresh_token', newRefresh);
       localStorage.setItem('user', JSON.stringify(user));
       setToken(accessToken);
+      setRefreshToken(newRefresh || null);
       setUser(user);
       setIsAuthenticated(true);
       
@@ -97,10 +102,13 @@ export const AuthProvider = ({ children }) => {
       
       const { tokens, user } = response.data;
       const accessToken = tokens.access;
+      const newRefresh = tokens.refresh;
       
       localStorage.setItem('token', accessToken);
+      if (newRefresh) localStorage.setItem('refresh_token', newRefresh);
       localStorage.setItem('user', JSON.stringify(user));
       setToken(accessToken);
+      setRefreshToken(newRefresh || null);
       setUser(user);
       setIsAuthenticated(true);
       
@@ -114,10 +122,43 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const refreshAccessToken = async () => {
+    try {
+      const storedRefresh = localStorage.getItem('refresh_token');
+      if (!storedRefresh) return null;
+      const response = await axios.post(`${API_BASE_URL}/refresh/`, {
+        refresh: storedRefresh
+      });
+      const newAccess = response.data.access;
+      const newRefresh = response.data.refresh;
+      if (newAccess) {
+        localStorage.setItem('token', newAccess);
+        setToken(newAccess);
+        if (newRefresh) {
+          localStorage.setItem('refresh_token', newRefresh);
+          setRefreshToken(newRefresh);
+        }
+        return newAccess;
+      }
+      return null;
+    } catch (error) {
+      logout();
+      return null;
+    }
+  };
+
   const logout = () => {
+    const storedRefresh = localStorage.getItem('refresh_token');
+    if (storedRefresh) {
+      axios.post(`${API_BASE_URL}/logout/`, { refresh: storedRefresh }, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      }).catch(() => {});
+    }
     localStorage.removeItem('token');
+    localStorage.removeItem('refresh_token');
     localStorage.removeItem('user');
     setToken(null);
+    setRefreshToken(null);
     setUser(null);
     setIsAuthenticated(false);
   };
@@ -126,9 +167,11 @@ export const AuthProvider = ({ children }) => {
     user,
     token,
     isAuthenticated,
+    refreshToken,
     login,
     signup,
-    logout
+    logout,
+    refreshAccessToken
   };
 
   return (

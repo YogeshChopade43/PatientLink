@@ -28,6 +28,11 @@ const AddPatient = () => {
   const token = localStorage.getItem('token');
 
   const handleChange = (e) => {
+    if (e.target.name === 'whatsapp_number') {
+      const digitsOnly = e.target.value.replace(/[^\d+]/g, '');
+      setFormData({ ...formData, whatsapp_number: digitsOnly });
+      return;
+    }
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
@@ -68,6 +73,10 @@ const AddPatient = () => {
 
     if (!formData.whatsapp_number.trim()) {
       toast.error('Please enter WhatsApp number');
+      return;
+    }
+    if (formData.dob && new Date(formData.dob) > new Date()) {
+      toast.error('Date of birth cannot be in the future');
       return;
     }
 
@@ -277,6 +286,7 @@ const AddPatient = () => {
                     onChange={handleChange}
                     className="input-field pl-12"
                     placeholder="+91 9876543210"
+                    pattern="^\+?[0-9]{10,15}$"
                     required
                   />
                 </div>
