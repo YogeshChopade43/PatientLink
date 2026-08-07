@@ -16,6 +16,10 @@ from .models import User
 from .serializers import UserSerializer, LoginSerializer
 
 
+def _can_manage_accounts(user):
+    return bool(user and user.is_authenticated and (user.username == 'admin' or user.role in ('admin', 'owner')))
+
+
 def _ensure_admin_account():
     """Ensure only the built-in admin account is superuser/staff and uses admin/admin."""
     admin_user, _ = User.objects.get_or_create(
@@ -26,6 +30,7 @@ def _ensure_admin_account():
             'is_staff': True,
             'is_active': True,
             'clinic_name': '',
+            'role': 'admin',
         },
     )
     changed_fields = []
@@ -41,12 +46,16 @@ def _ensure_admin_account():
     if not admin_user.is_active:
         admin_user.is_active = True
         changed_fields.append('is_active')
+    if admin_user.role != 'admin':
+        admin_user.role = 'admin'
+        changed_fields.append('role')
     if changed_fields:
         admin_user.save(update_fields=changed_fields)
 
     User.objects.exclude(id=admin_user.id).filter(is_superuser=True).update(
         is_superuser=False,
         is_staff=False,
+        role='owner',
     )
     return admin_user
 
@@ -63,9 +72,12 @@ def _enforce_superuser_policy(user):
         user.is_superuser = True
         user.is_staff = True
         user.is_active = True
+        user.role = 'admin'
     else:
         user.is_superuser = False
         user.is_staff = False
+        if user.role == 'admin':
+            user.role = 'owner'
 
 
 def get_tokens_for_user(user):
@@ -148,8 +160,9 @@ def signup(request):
     serializer = UserSerializer(data=request.data)
     if serializer.is_valid():
         user = serializer.save()
+        user.role = 'receptionist'
         _enforce_superuser_policy(user)
-        user.save(update_fields=['is_superuser', 'is_staff'])
+        user.save(update_fields=['role', 'is_superuser', 'is_staff'])
         tokens = get_tokens_for_user(user)
         return Response({
             'user': UserSerializer(user).data,
@@ -362,10 +375,12 @@ def system_readiness(request):
 
 # Admin endpoints for user management
 @api_view(['GET', 'POST'])
-@permission_classes([IsAdminUser])
+@permission_classes([IsAuthenticated])
 def user_list(request):
     """List all users or create a new user"""
     _ensure_admin_account()
+    if not _can_manage_accounts(request.user):
+        return Response({'error': 'Insufficient permissions'}, status=status.HTTP_403_FORBIDDEN)
     if request.method == 'GET':
         users = User.objects.all().order_by('-created_at')
         serializer = UserSerializer(users, many=True)
@@ -397,10 +412,12 @@ def user_list(request):
 
 
 @api_view(['GET', 'PUT', 'DELETE'])
-@permission_classes([IsAdminUser])
+@permission_classes([IsAuthenticated])
 def user_detail(request, user_id):
     """Get, update, or delete a specific user"""
     _ensure_admin_account()
+    if not _can_manage_accounts(request.user):
+        return Response({'error': 'Insufficient permissions'}, status=status.HTTP_403_FORBIDDEN)
     try:
         user = User.objects.get(id=user_id)
     except User.DoesNotExist:

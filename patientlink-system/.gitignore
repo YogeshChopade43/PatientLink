@@ -6,11 +6,13 @@ __pycache__/
 .Python
 env/
 venv/
+.venv/
 ENV/
 *.egg-info/
 dist/
 build/
 *.egg
+start.md
 
 # Django
 *.log
@@ -59,3 +61,7 @@ credentials.json
 
 # Local agent/runtime artifacts
 .codex_logs/
+api/celerybeat-schedule*
+*.pid
+*.out
+*.err

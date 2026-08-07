@@ -10,7 +10,8 @@ const AddPatient = () => {
   const [formData, setFormData] = useState({
     name: '',
     whatsapp_number: '',
-    dob: ''
+    dob: '',
+    consent_whatsapp: false
   });
   const [medicines, setMedicines] = useState([
     {
@@ -28,6 +29,10 @@ const AddPatient = () => {
   const token = localStorage.getItem('token');
 
   const handleChange = (e) => {
+    if (e.target.type === 'checkbox') {
+      setFormData({ ...formData, [e.target.name]: e.target.checked });
+      return;
+    }
     if (e.target.name === 'whatsapp_number') {
       const digitsOnly = e.target.value.replace(/[^\d+]/g, '');
       setFormData({ ...formData, whatsapp_number: digitsOnly });
@@ -75,6 +80,10 @@ const AddPatient = () => {
       toast.error('Please enter WhatsApp number');
       return;
     }
+    if (!formData.consent_whatsapp) {
+      toast.error('Please capture patient consent for WhatsApp reminders');
+      return;
+    }
     if (formData.dob && new Date(formData.dob) > new Date()) {
       toast.error('Date of birth cannot be in the future');
       return;
@@ -102,6 +111,7 @@ const AddPatient = () => {
         name: formData.name,
         whatsapp_number: formData.whatsapp_number,
         dob: formData.dob,
+        consent_whatsapp: formData.consent_whatsapp,
         medicines: validMedicines.map(med => ({
           medicine_name: med.medicine_name,
           morning: med.morning,
@@ -312,6 +322,19 @@ const AddPatient = () => {
                     className="input-field pl-12"
                   />
                 </div>
+              </div>
+
+              <div className="space-y-2 md:col-span-2">
+                <label className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    name="consent_whatsapp"
+                    checked={formData.consent_whatsapp}
+                    onChange={handleChange}
+                    className="w-4 h-4"
+                  />
+                  Patient consented to WhatsApp reminders
+                </label>
               </div>
             </div>
           </div>

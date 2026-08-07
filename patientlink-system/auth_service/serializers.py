@@ -12,6 +12,7 @@ class UserSerializer(serializers.ModelSerializer):
             'username',
             'password',
             'clinic_name',
+            'role',
             'created_at',
             'is_active',
             'is_staff',

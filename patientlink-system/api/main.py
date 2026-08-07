@@ -132,6 +132,8 @@ def ensure_schema_upgrades():
                     ("updated_at", "ALTER TABLE patients ADD COLUMN updated_at DATETIME"),
                     ("deleted_at", "ALTER TABLE patients ADD COLUMN deleted_at DATETIME"),
                     ("deleted_by_user_id", "ALTER TABLE patients ADD COLUMN deleted_by_user_id VARCHAR"),
+                    ("consent_whatsapp", "ALTER TABLE patients ADD COLUMN consent_whatsapp BOOLEAN DEFAULT 0"),
+                    ("consent_at", "ALTER TABLE patients ADD COLUMN consent_at DATETIME"),
                 ]:
                     if col_name not in col_names:
                         conn.execute(text(ddl))
@@ -155,6 +157,8 @@ def ensure_schema_upgrades():
                     ("updated_at", "ALTER TABLE patients ADD COLUMN updated_at TIMESTAMP"),
                     ("deleted_at", "ALTER TABLE patients ADD COLUMN deleted_at TIMESTAMP"),
                     ("deleted_by_user_id", "ALTER TABLE patients ADD COLUMN deleted_by_user_id VARCHAR"),
+                    ("consent_whatsapp", "ALTER TABLE patients ADD COLUMN consent_whatsapp BOOLEAN DEFAULT FALSE"),
+                    ("consent_at", "ALTER TABLE patients ADD COLUMN consent_at TIMESTAMP"),
                 ]:
                     if col_name not in col_names:
                         conn.execute(text(ddl))
@@ -279,6 +283,18 @@ def parse_iso_date(value: Optional[str], field_name: str) -> Optional[date]:
         raise HTTPException(status_code=400, detail=f"Invalid {field_name}; expected YYYY-MM-DD")
 
 
+def is_course_active_on_date(start_dt: Optional[datetime], duration_days: Optional[int], on_date: date) -> bool:
+    """
+    Strict day-based activity window:
+    start=2026-03-01 and duration=5 => active on 1..5, inactive from 6 onward.
+    """
+    if not start_dt or not duration_days or duration_days <= 0:
+        return False
+    start_day = start_dt.date()
+    end_day = start_day + timedelta(days=duration_days - 1)
+    return start_day <= on_date <= end_day
+
+
 def log_message_event(
     db: Session,
     owner_user_id: str,
@@ -330,6 +346,23 @@ def background_tasks_enabled() -> bool:
 def whatsapp_enabled() -> bool:
     """Feature toggle for WhatsApp delivery."""
     return os.environ.get("ENABLE_WHATSAPP", "false").lower() == "true"
+
+
+def get_or_create_template_config(db: Session, owner_user_id: str) -> models.TemplateConfig:
+    cfg = db.query(models.TemplateConfig).filter(models.TemplateConfig.owner_user_id == owner_user_id).first()
+    if cfg:
+        return cfg
+    cfg = models.TemplateConfig(
+        owner_user_id=owner_user_id,
+        use_templates=os.environ.get("WHATSAPP_USE_TEMPLATES", "true").lower() == "true",
+        language_code=os.environ.get("WA_TEMPLATE_LANGUAGE_CODE", "en"),
+        thank_you_template=os.environ.get("WA_TEMPLATE_THANK_YOU", ""),
+        reminder_template=os.environ.get("WA_TEMPLATE_REMINDER", ""),
+    )
+    db.add(cfg)
+    db.commit()
+    db.refresh(cfg)
+    return cfg
 
 # ============================================================================
 # API ENDPOINTS
@@ -429,6 +462,34 @@ async def ops_readiness(request: Request):
         },
     )
 
+
+@app.get("/ops/whatsapp-go-live")
+@limiter.limit("30/minute")
+async def whatsapp_go_live_check(request: Request):
+    """
+    Focused diagnostics for WhatsApp production go-live.
+    """
+    checks = {
+        "whatsapp_enabled": whatsapp_enabled(),
+        "api_token_configured": bool(os.environ.get("META_WHATSAPP_TOKEN")),
+        "phone_number_id_configured": bool(os.environ.get("META_PHONE_NUMBER_ID")),
+        "business_account_id_configured": bool(
+            os.environ.get("META_WHATSAPP_BUSINESS_ID") or os.environ.get("META_BUSINESS_ACCOUNT_ID")
+        ),
+        "webhook_verify_token_configured": bool(os.environ.get("META_WEBHOOK_VERIFY_TOKEN")),
+        "webhook_signature_secret_configured": bool(os.environ.get("META_APP_SECRET")),
+        "template_mode_enabled": os.environ.get("WHATSAPP_USE_TEMPLATES", "true").lower() == "true",
+        "thank_you_template_set": bool(os.environ.get("WA_TEMPLATE_THANK_YOU", "")),
+        "reminder_template_set": bool(os.environ.get("WA_TEMPLATE_REMINDER", "")),
+        "template_language_set": bool(os.environ.get("WA_TEMPLATE_LANGUAGE_CODE", "")),
+    }
+    ready = all(checks.values())
+    return {
+        "ready": ready,
+        "checks": checks,
+        "next_step": "Configure missing values in .env and restart API/Celery.",
+    }
+
 @app.post("/patients/", response_model=schemas.Patient)
 @limiter.limit("30/minute")
 async def create_patient(
@@ -460,7 +521,9 @@ async def create_patient(
         owner_user_id=user_id,
         name=sanitized_name,
         whatsapp_number=sanitized_whatsapp,
-        dob=patient.dob
+        dob=patient.dob,
+        consent_whatsapp=bool(patient.consent_whatsapp),
+        consent_at=datetime.utcnow() if patient.consent_whatsapp else None,
     )
     db.add(db_patient)
     db.commit()
@@ -493,24 +556,25 @@ async def create_patient(
     ).all()
     
     # Send thank-you WhatsApp only when the feature is enabled.
-    if whatsapp_enabled():
+    if whatsapp_enabled() and db_patient.consent_whatsapp:
         try:
             import tasks
+            template_cfg = get_or_create_template_config(db, user_id)
             if background_tasks_enabled():
                 tasks.send_thank_you_message.delay(
+                    owner_user_id=user_id,
                     patient_name=db_patient.name,
                     phone_number=db_patient.whatsapp_number
                 )
                 status_value = "queued"
             else:
                 from whatsapp_service import whatsapp_service
-                send_result = whatsapp_service.send_message(
+                send_result = whatsapp_service.send_thank_you(
+                    patient_name=db_patient.name,
                     phone_number=db_patient.whatsapp_number,
-                    message=(
-                        "Thank you for visiting.\n\n"
-                        f"Dear {db_patient.name},\n\n"
-                        "Thank you for registering with PatientLink."
-                    ),
+                    use_templates=template_cfg.use_templates,
+                    template_name=template_cfg.thank_you_template,
+                    language_code=template_cfg.language_code,
                 )
                 status_value = "sent" if send_result.get("success") else "failed"
             log_message_event(
@@ -576,8 +640,6 @@ async def get_patients(
         query = query.filter(models.Patient.created_at >= datetime.combine(filter_date_from, datetime.min.time()))
     if filter_date_to:
         query = query.filter(models.Patient.created_at <= datetime.combine(filter_date_to, datetime.max.time()))
-    if active_only:
-        query = query.filter(models.Patient.deleted_at.is_(None))
     if reminder_status:
         matching_patient_ids = db.query(models.MessageLog.patient_id).filter(
             models.MessageLog.owner_user_id == user_id,
@@ -592,13 +654,28 @@ async def get_patients(
         ).distinct()
         query = query.filter(models.Patient.id.in_(matching_ids))
 
-    total = query.count()
-    patients = query.order_by(models.Patient.created_at.desc()).offset(skip).limit(limit).all()
+    # Load once, then apply strict medicine-course activity filtering in Python.
+    # This keeps behavior consistent across SQLite/Postgres without DB-specific date arithmetic.
+    patients = query.order_by(models.Patient.created_at.desc()).all()
+    today = datetime.utcnow().date()
+    filtered_patients = []
     for patient in patients:
-        patient.medicines = db.query(models.Medicine).filter(
+        patient_medicines = db.query(models.Medicine).filter(
             models.Medicine.patient_id == patient.id
         ).all()
-    return {"items": patients, "total": total, "skip": skip, "limit": limit}
+        patient.medicines = patient_medicines
+        if active_only:
+            has_active_course = any(
+                is_course_active_on_date(med.start_date, med.duration_days, today)
+                for med in patient_medicines
+            )
+            if not has_active_course:
+                continue
+        filtered_patients.append(patient)
+
+    total = len(filtered_patients)
+    paginated = filtered_patients[skip:skip + limit]
+    return {"items": paginated, "total": total, "skip": skip, "limit": limit}
 
 @app.get("/patients/{patient_id}", response_model=schemas.Patient)
 @limiter.limit("60/minute")
@@ -699,6 +776,9 @@ async def update_patient(
         patient.whatsapp_number = validate_phone_number(patient_update.whatsapp_number)
     if patient_update.dob is not None:
         patient.dob = patient_update.dob
+    if patient_update.consent_whatsapp is not None:
+        patient.consent_whatsapp = bool(patient_update.consent_whatsapp)
+        patient.consent_at = datetime.utcnow() if patient_update.consent_whatsapp else None
     
     # Update medicines if provided
     if patient_update.medicines is not None:
@@ -820,6 +900,8 @@ async def send_whatsapp_reminder(
     ).first()
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
+    if not patient.consent_whatsapp:
+        raise HTTPException(status_code=400, detail="Patient has not provided WhatsApp consent")
     
     medicines = db.query(models.Medicine).filter(
         models.Medicine.patient_id == patient_id
@@ -841,6 +923,8 @@ async def send_whatsapp_reminder(
         for med in medicines
     ]
     
+    template_cfg = get_or_create_template_config(db, user_id)
+
     if background_tasks_enabled():
         try:
             task = tasks.send_patient_medicine_reminder.delay(
@@ -872,6 +956,9 @@ async def send_whatsapp_reminder(
             patient_name=patient.name,
             phone_number=patient.whatsapp_number,
             medicines=medicines_data,
+            use_templates=template_cfg.use_templates,
+            template_name=template_cfg.reminder_template,
+            language_code=template_cfg.language_code,
         )
         if not direct_result.get("success"):
             log_message_event(
@@ -921,6 +1008,7 @@ async def send_all_whatsapp_reminders(
     patients = db.query(models.Patient).filter(
         models.Patient.owner_user_id == user_id,
         models.Patient.deleted_at.is_(None),
+        models.Patient.consent_whatsapp.is_(True),
     ).all()
     
     reminders_data = []
@@ -949,8 +1037,10 @@ async def send_all_whatsapp_reminders(
             })
     
     if not reminders_data:
-        raise HTTPException(status_code=400, detail="No patients with medicines found")
-    
+        raise HTTPException(status_code=400, detail="No consented patients with medicines found")
+
+    template_cfg = get_or_create_template_config(db, user_id)
+
     if background_tasks_enabled():
         try:
             result = tasks.send_bulk_reminders.delay(reminders_data)
@@ -978,6 +1068,9 @@ async def send_all_whatsapp_reminders(
                 patient_name=item["patient_name"],
                 phone_number=item["phone_number"],
                 medicines=item["medicines"],
+                use_templates=template_cfg.use_templates,
+                template_name=template_cfg.reminder_template,
+                language_code=template_cfg.language_code,
             )
             if not send_result.get("success"):
                 log_message_event(
@@ -1049,6 +1142,36 @@ async def get_retry_queue(
         models.MessageLog.owner_user_id == user_id,
         models.MessageLog.status == "failed",
     ).order_by(models.MessageLog.updated_at.desc()).limit(200).all()
+
+
+@app.get("/whatsapp/template-config", response_model=schemas.TemplateConfig)
+@limiter.limit("30/minute")
+async def get_template_config(
+    request: Request,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(verify_token),
+):
+    user_id = get_authenticated_user_id(token_payload)
+    return get_or_create_template_config(db, user_id)
+
+
+@app.put("/whatsapp/template-config", response_model=schemas.TemplateConfig)
+@limiter.limit("20/minute")
+async def update_template_config(
+    request: Request,
+    payload: schemas.TemplateConfigUpdate,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(verify_token),
+):
+    user_id = get_authenticated_user_id(token_payload)
+    cfg = get_or_create_template_config(db, user_id)
+    cfg.use_templates = bool(payload.use_templates)
+    cfg.language_code = sanitize_input(payload.language_code or "en")
+    cfg.thank_you_template = sanitize_input(payload.thank_you_template or "")
+    cfg.reminder_template = sanitize_input(payload.reminder_template or "")
+    db.commit()
+    db.refresh(cfg)
+    return cfg
 
 
 @app.post("/whatsapp/status/webhook")
@@ -1190,7 +1313,7 @@ async def reports_summary(
         models.Patient.created_at <= end_dt,
     )
     total_patients = patients.count()
-    active_patients = patients.filter(models.Patient.deleted_at.is_(None)).count()
+    active_patients = 0
 
     patient_ids = [
         pid for (pid,) in db.query(models.Patient.id).filter(
@@ -1203,12 +1326,14 @@ async def reports_summary(
     active_medicine_courses = 0
     if patient_ids:
         total_medicines = db.query(models.Medicine).filter(models.Medicine.patient_id.in_(patient_ids)).count()
-        now = datetime.utcnow()
+        today_for_activity = datetime.utcnow().date()
         all_meds = db.query(models.Medicine).filter(models.Medicine.patient_id.in_(patient_ids)).all()
-        active_medicine_courses = sum(
-            1 for med in all_meds
-            if med.start_date and med.duration_days and (med.start_date + timedelta(days=med.duration_days)) >= now
-        )
+        active_patient_ids = set()
+        for med in all_meds:
+            if is_course_active_on_date(med.start_date, med.duration_days, today_for_activity):
+                active_medicine_courses += 1
+                active_patient_ids.add(med.patient_id)
+        active_patients = len(active_patient_ids)
 
     sent_count = db.query(models.MessageLog).filter(
         models.MessageLog.owner_user_id == user_id,
@@ -1296,6 +1421,8 @@ async def export_backup(
                 "name": patient.name,
                 "whatsapp_number": patient.whatsapp_number,
                 "dob": patient.dob,
+                "consent_whatsapp": bool(patient.consent_whatsapp),
+                "consent_at": patient.consent_at.isoformat() if patient.consent_at else None,
                 "created_at": patient.created_at.isoformat() if patient.created_at else None,
                 "deleted_at": patient.deleted_at.isoformat() if patient.deleted_at else None,
             },
@@ -1339,6 +1466,8 @@ async def restore_backup(
             name=name,
             whatsapp_number=phone,
             dob=patient_obj.get("dob", ""),
+            consent_whatsapp=bool(patient_obj.get("consent_whatsapp", False)),
+            consent_at=datetime.utcnow() if patient_obj.get("consent_whatsapp", False) else None,
             deleted_at=None,
             deleted_by_user_id=None,
         )
@@ -1378,6 +1507,32 @@ async def list_backups(
         reverse=True,
     )
     return {"files": files[:200]}
+
+
+@app.post("/backup/run-now")
+@limiter.limit("5/minute")
+async def run_backup_now(
+    request: Request,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(verify_token),
+):
+    user_id = get_authenticated_user_id(token_payload)
+    if background_tasks_enabled():
+        try:
+            import tasks
+            task = tasks.create_scheduled_backup.delay()
+            return {"success": True, "queued": True, "task_id": task.id}
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=f"Backup queue unavailable: {exc}")
+
+    # Fallback: run synchronously without Celery.
+    backup_payload = await export_backup(request=request, db=db, token_payload=token_payload)
+    backup_dir = Path(os.environ.get("BACKUP_DIR", "./backups"))
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    file_path = backup_dir / f"backup_manual_{user_id}_{ts}.json"
+    file_path.write_text(json.dumps(backup_payload, indent=2), encoding="utf-8")
+    return {"success": True, "queued": False, "file": file_path.name}
 
 
 @app.post("/backup/restore-file")

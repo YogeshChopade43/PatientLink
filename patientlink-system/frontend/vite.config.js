@@ -45,6 +45,16 @@ export default defineConfig(({ mode }) => {
       sourcemap: false,
       // Use default esbuild minifier to avoid optional terser dependency
       minify: true,
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            react: ['react', 'react-dom', 'react-router-dom'],
+            motion: ['framer-motion'],
+            ui: ['react-hot-toast', '@heroicons/react'],
+            http: ['axios'],
+          },
+        },
+      },
     },
     // Define environment variables for the app
     define: {

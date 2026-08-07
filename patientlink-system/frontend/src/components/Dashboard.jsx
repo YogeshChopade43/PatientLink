@@ -32,6 +32,18 @@ const Dashboard = () => {
   const [users, setUsers] = useState([]);
   const [showUserManager, setShowUserManager] = useState(false);
   const [loadingUsers, setLoadingUsers] = useState(false);
+  const [savingUserId, setSavingUserId] = useState(null);
+  const [showTemplateManager, setShowTemplateManager] = useState(false);
+  const [showBackupManager, setShowBackupManager] = useState(false);
+  const [backupFiles, setBackupFiles] = useState([]);
+  const [loadingBackupFiles, setLoadingBackupFiles] = useState(false);
+  const [templateConfig, setTemplateConfig] = useState({
+    use_templates: true,
+    language_code: 'en',
+    thank_you_template: '',
+    reminder_template: '',
+  });
+  const [savingTemplateConfig, setSavingTemplateConfig] = useState(false);
   const navigate = useNavigate();
   const token = localStorage.getItem('token');
   const currentUser = JSON.parse(localStorage.getItem('user') || 'null');
@@ -216,6 +228,89 @@ const Dashboard = () => {
     }
   };
 
+  const fetchBackupFiles = async () => {
+    setLoadingBackupFiles(true);
+    try {
+      const base = API_URL.replace('/patients', '/backup');
+      const response = await axios.get(`${base}/list`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setBackupFiles(response.data?.files || []);
+    } catch (error) {
+      toast.error('Failed to load backup files');
+      setBackupFiles([]);
+    } finally {
+      setLoadingBackupFiles(false);
+    }
+  };
+
+  const handleOpenBackupManager = async () => {
+    setShowBackupManager(true);
+    await fetchBackupFiles();
+  };
+
+  const handleRunBackupNow = async () => {
+    try {
+      const base = API_URL.replace('/patients', '/backup');
+      await axios.post(`${base}/run-now`, {}, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      toast.success('Backup started');
+      fetchBackupFiles();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Failed to run backup');
+    }
+  };
+
+  const handleRestoreBackupFile = async (filename) => {
+    if (!window.confirm(`Restore server backup "${filename}"?`)) return;
+    try {
+      const base = API_URL.replace('/patients', '/backup');
+      await axios.post(`${base}/restore-file`, { filename }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      toast.success('Backup restored');
+      fetchPatients();
+      fetchReportSummary();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Restore failed');
+    }
+  };
+
+  const handleOpenTemplateManager = async () => {
+    setShowTemplateManager(true);
+    try {
+      const base = API_URL.replace('/patients', '/whatsapp');
+      const response = await axios.get(`${base}/template-config`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setTemplateConfig({
+        use_templates: !!response.data?.use_templates,
+        language_code: response.data?.language_code || 'en',
+        thank_you_template: response.data?.thank_you_template || '',
+        reminder_template: response.data?.reminder_template || '',
+      });
+    } catch (error) {
+      toast.error('Failed to load template config');
+    }
+  };
+
+  const handleSaveTemplateManager = async () => {
+    setSavingTemplateConfig(true);
+    try {
+      const base = API_URL.replace('/patients', '/whatsapp');
+      await axios.put(`${base}/template-config`, templateConfig, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      toast.success('Template settings saved');
+      setShowTemplateManager(false);
+    } catch (error) {
+      toast.error('Failed to save template settings');
+    } finally {
+      setSavingTemplateConfig(false);
+    }
+  };
+
   const handleDeleteUser = async (userId, username) => {
     if (!window.confirm(`Delete account "${username}"?`)) return;
 
@@ -227,6 +322,30 @@ const Dashboard = () => {
       toast.success('User account deleted');
     } catch (error) {
       toast.error(error.response?.data?.error || 'Failed to delete user account');
+    }
+  };
+
+  const handleUserFieldChange = (userId, field, value) => {
+    setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, [field]: value } : u)));
+  };
+
+  const handleSaveUser = async (u) => {
+    setSavingUserId(u.id);
+    try {
+      const payload = {
+        username: u.username,
+        clinic_name: u.clinic_name || '',
+        role: u.role || 'receptionist',
+      };
+      const response = await axios.put(`${AUTH_API_URL}/users/${u.id}/`, payload, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setUsers((prev) => prev.map((item) => (item.id === u.id ? response.data : item)));
+      toast.success(`Updated "${u.username}"`);
+    } catch (error) {
+      toast.error(error.response?.data?.error || 'Failed to update account');
+    } finally {
+      setSavingUserId(null);
     }
   };
 
@@ -358,6 +477,26 @@ const Dashboard = () => {
     });
   };
 
+  const isCourseActive = (startDate, durationDays) => {
+    if (!startDate || !durationDays || durationDays <= 0) return false;
+    const start = new Date(startDate);
+    const today = new Date();
+    const startDay = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+    const todayDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const endDay = new Date(startDay);
+    endDay.setDate(endDay.getDate() + Number(durationDays) - 1);
+    return todayDay >= startDay && todayDay <= endDay;
+  };
+
+  const patientHasActiveCourse = (patient) => {
+    const meds = patient?.medicines || [];
+    if (meds.length === 0) return false;
+    return meds.some((med) => {
+      const startDate = med.start_date || patient.created_at;
+      return isCourseActive(startDate, med.duration_days);
+    });
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-blue-50">
@@ -412,7 +551,7 @@ const Dashboard = () => {
 
             {/* Actions */}
             <div className="flex items-center space-x-3">
-              {currentUser?.is_superuser && (
+              {(currentUser?.is_superuser || currentUser?.role === 'owner' || currentUser?.role === 'admin') && (
                 <motion.button
                   whileHover={{ scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}
@@ -450,10 +589,28 @@ const Dashboard = () => {
               <motion.button
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
+                onClick={handleOpenTemplateManager}
+                className="flex items-center space-x-2 bg-emerald-500 text-white px-4 py-2.5 rounded-xl font-medium shadow-lg shadow-emerald-500/30 hover:shadow-emerald-500/50 transition-all"
+              >
+                <span className="hidden sm:inline">Templates</span>
+              </motion.button>
+
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
                 onClick={handleBackupExport}
                 className="flex items-center space-x-2 bg-purple-500 text-white px-4 py-2.5 rounded-xl font-medium shadow-lg shadow-purple-500/30 hover:shadow-purple-500/50 transition-all"
               >
                 <span className="hidden sm:inline">Backup</span>
+              </motion.button>
+
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={handleOpenBackupManager}
+                className="flex items-center space-x-2 bg-fuchsia-500 text-white px-4 py-2.5 rounded-xl font-medium shadow-lg shadow-fuchsia-500/30 hover:shadow-fuchsia-500/50 transition-all"
+              >
+                <span className="hidden sm:inline">Backups</span>
               </motion.button>
 
               <label className="flex items-center space-x-2 bg-purple-100 text-purple-700 px-3 py-2.5 rounded-xl font-medium cursor-pointer">
@@ -730,6 +887,15 @@ const Dashboard = () => {
                       </div>
 
                       <div className="flex items-center space-x-2 flex-shrink-0">
+                        <span
+                          className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                            patientHasActiveCourse(patient)
+                              ? 'bg-emerald-100 text-emerald-700'
+                              : 'bg-gray-200 text-gray-600'
+                          }`}
+                        >
+                          {patientHasActiveCourse(patient) ? 'Active Course' : 'Course Ended'}
+                        </span>
                         {patient.medicines?.length > 0 ? (
                           <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-teal-100 text-teal-700">
                             {patient.medicines.length}
@@ -786,6 +952,12 @@ const Dashboard = () => {
                             <div>
                               <span className="text-gray-500">Entered At:</span>
                               <p className="font-medium text-gray-800">{formatDateTime(patient.created_at)}</p>
+                            </div>
+                            <div>
+                              <span className="text-gray-500">WhatsApp Consent:</span>
+                              <p className={`font-medium ${patient.consent_whatsapp ? 'text-emerald-700' : 'text-red-600'}`}>
+                                {patient.consent_whatsapp ? 'Consented' : 'Not consented'}
+                              </p>
                             </div>
                           </div>
                           
@@ -862,18 +1034,49 @@ const Dashboard = () => {
                 ) : (
                   <div className="space-y-3">
                     {users.map((u) => (
-                      <div key={u.id} className="flex items-center justify-between p-3 rounded-xl border border-gray-200 bg-gray-50">
-                        <div>
+                      <div key={u.id} className="p-3 rounded-xl border border-gray-200 bg-gray-50">
+                        <div className="flex items-center justify-between gap-3">
                           <p className="font-semibold text-gray-800">{u.username}</p>
-                          <p className="text-sm text-gray-500">{u.clinic_name || 'No clinic name'}</p>
+                          <div className="flex items-center gap-2">
+                            {u.id === currentUser?.id && (
+                              <span className="text-xs px-2 py-1 rounded-full bg-indigo-100 text-indigo-700">You</span>
+                            )}
+                            {u.username === 'admin' && (
+                              <span className="text-xs px-2 py-1 rounded-full bg-emerald-100 text-emerald-700">Superuser</span>
+                            )}
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          {u.id === currentUser?.id && (
-                            <span className="text-xs px-2 py-1 rounded-full bg-indigo-100 text-indigo-700">You</span>
-                          )}
+                        <p className="text-sm text-gray-500 mb-3">{u.clinic_name || 'No clinic name'}</p>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                          <input
+                            type="text"
+                            value={u.clinic_name || ''}
+                            onChange={(e) => handleUserFieldChange(u.id, 'clinic_name', e.target.value)}
+                            className="input-field sm:col-span-2"
+                            placeholder="Clinic name"
+                          />
+                          <select
+                            value={u.role || 'receptionist'}
+                            onChange={(e) => handleUserFieldChange(u.id, 'role', e.target.value)}
+                            className="input-field"
+                            disabled={u.username === 'admin'}
+                          >
+                            <option value="owner">Owner</option>
+                            <option value="receptionist">Receptionist</option>
+                          </select>
+                        </div>
+                        <div className="flex items-center justify-end gap-2 mt-3">
                           <button
                             type="button"
-                            disabled={u.id === currentUser?.id}
+                            onClick={() => handleSaveUser(u)}
+                            disabled={savingUserId === u.id}
+                            className="px-3 py-1.5 rounded-lg text-sm font-medium bg-blue-100 text-blue-700 hover:bg-blue-200 disabled:opacity-50"
+                          >
+                            {savingUserId === u.id ? 'Saving...' : 'Save'}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={u.id === currentUser?.id || u.username === 'admin'}
                             onClick={() => handleDeleteUser(u.id, u.username)}
                             className="px-3 py-1.5 rounded-lg text-sm font-medium bg-red-100 text-red-700 hover:bg-red-200 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
@@ -883,6 +1086,164 @@ const Dashboard = () => {
                       </div>
                     ))}
                     {users.length === 0 && <p className="text-gray-500">No users found.</p>}
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Template Manager Modal */}
+      <AnimatePresence>
+        {showTemplateManager && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+            onClick={() => setShowTemplateManager(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-xl max-h-[85vh] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="p-6 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-2xl font-bold text-gray-800">WhatsApp Templates</h2>
+                  <button
+                    type="button"
+                    onClick={() => setShowTemplateManager(false)}
+                    className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-xl transition-all"
+                  >
+                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+
+                <label className="text-sm text-gray-700 flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={templateConfig.use_templates}
+                    onChange={(e) => setTemplateConfig((prev) => ({ ...prev, use_templates: e.target.checked }))}
+                  />
+                  Use approved WhatsApp templates
+                </label>
+
+                <div>
+                  <label className="text-sm font-semibold text-gray-700 mb-1 block">Language Code</label>
+                  <input
+                    type="text"
+                    value={templateConfig.language_code}
+                    onChange={(e) => setTemplateConfig((prev) => ({ ...prev, language_code: e.target.value }))}
+                    className="input-field"
+                    placeholder="en or en_US"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-sm font-semibold text-gray-700 mb-1 block">Thank-you Template Name</label>
+                  <input
+                    type="text"
+                    value={templateConfig.thank_you_template}
+                    onChange={(e) => setTemplateConfig((prev) => ({ ...prev, thank_you_template: e.target.value }))}
+                    className="input-field"
+                    placeholder="patientlink_thank_you"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-sm font-semibold text-gray-700 mb-1 block">Reminder Template Name</label>
+                  <input
+                    type="text"
+                    value={templateConfig.reminder_template}
+                    onChange={(e) => setTemplateConfig((prev) => ({ ...prev, reminder_template: e.target.value }))}
+                    className="input-field"
+                    placeholder="patientlink_medicine_reminder"
+                  />
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowTemplateManager(false)}
+                    className="px-4 py-2 bg-gray-100 rounded-lg text-gray-700"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveTemplateManager}
+                    disabled={savingTemplateConfig}
+                    className="px-4 py-2 bg-emerald-500 text-white rounded-lg disabled:opacity-60"
+                  >
+                    {savingTemplateConfig ? 'Saving...' : 'Save'}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Backup Manager Modal */}
+      <AnimatePresence>
+        {showBackupManager && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+            onClick={() => setShowBackupManager(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[85vh] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="p-6 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-2xl font-bold text-gray-800">Backup Manager</h2>
+                  <button
+                    type="button"
+                    onClick={() => setShowBackupManager(false)}
+                    className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-xl transition-all"
+                  >
+                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button type="button" onClick={handleRunBackupNow} className="px-4 py-2 bg-purple-500 text-white rounded-lg">Run Backup Now</button>
+                  <button type="button" onClick={fetchBackupFiles} className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg">Refresh</button>
+                </div>
+
+                {loadingBackupFiles ? (
+                  <p className="text-gray-500">Loading backups...</p>
+                ) : backupFiles.length === 0 ? (
+                  <p className="text-gray-500">No server backup files found.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {backupFiles.map((file) => (
+                      <div key={file} className="flex items-center justify-between p-3 rounded-xl border border-gray-200 bg-gray-50">
+                        <p className="text-sm text-gray-700 truncate pr-2">{file}</p>
+                        <button
+                          type="button"
+                          onClick={() => handleRestoreBackupFile(file)}
+                          className="px-3 py-1.5 rounded-lg text-sm font-medium bg-indigo-100 text-indigo-700 hover:bg-indigo-200"
+                        >
+                          Restore
+                        </button>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>

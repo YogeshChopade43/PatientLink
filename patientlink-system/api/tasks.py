@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 
 from celery.schedules import crontab
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 import models
@@ -28,6 +28,18 @@ def _get_db_session():
     database_url = os.environ.get("DATABASE_URL", "sqlite:///./patientlink.db")
     connect_args = {"check_same_thread": False} if "sqlite" in database_url else {}
     engine = create_engine(database_url, connect_args=connect_args, pool_pre_ping=True)
+    models.Base.metadata.create_all(bind=engine)
+    try:
+        with engine.begin() as conn:
+            if "sqlite" in database_url:
+                cols = conn.execute(text("PRAGMA table_info(patients)")).fetchall()
+                col_names = {row[1] for row in cols}
+                if "consent_whatsapp" not in col_names:
+                    conn.execute(text("ALTER TABLE patients ADD COLUMN consent_whatsapp BOOLEAN DEFAULT 0"))
+                if "consent_at" not in col_names:
+                    conn.execute(text("ALTER TABLE patients ADD COLUMN consent_at DATETIME"))
+    except Exception:
+        pass
     session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     return session_local()
 
@@ -48,6 +60,12 @@ def _write_message_log(owner_user_id, patient_id, phone_number, message_type, st
         db.commit()
     finally:
         db.close()
+
+
+def _get_template_config(db, owner_user_id):
+    if not owner_user_id:
+        return None
+    return db.query(models.TemplateConfig).filter(models.TemplateConfig.owner_user_id == owner_user_id).first()
 
 
 @celery_app.task
@@ -142,7 +160,20 @@ def send_patient_medicine_reminder(self, patient_id, patient_name, phone_number,
 
     try:
         logger.info("Sending consolidated reminder to %s (%s)", patient_name, phone_number)
-        result = whatsapp_service.send_medicine_reminder(patient_name, phone_number, medicines)
+        db_cfg = _get_db_session()
+        cfg = None
+        try:
+            cfg = _get_template_config(db_cfg, owner_user_id)
+        finally:
+            db_cfg.close()
+        result = whatsapp_service.send_medicine_reminder(
+            patient_name,
+            phone_number,
+            medicines,
+            use_templates=cfg.use_templates if cfg else None,
+            template_name=cfg.reminder_template if cfg else None,
+            language_code=cfg.language_code if cfg else None,
+        )
         if result["success"]:
             _write_message_log(
                 owner_user_id=owner_user_id,
@@ -197,21 +228,25 @@ def send_bulk_reminders(self, reminders_data):
 
 
 @celery_app.task(bind=True, max_retries=3)
-def send_thank_you_message(self, patient_name, phone_number):
+def send_thank_you_message(self, patient_name, phone_number, owner_user_id=""):
     """Send thank-you message after patient registration."""
     from whatsapp_service import whatsapp_service
 
-    message = (
-        "Thank you for visiting.\n\n"
-        f"Dear {patient_name},\n\n"
-        "Thank you for registering with PatientLink. "
-        "We will send your medicine reminders as prescribed.\n\n"
-        "Stay healthy."
-    )
-
     try:
         logger.info("Sending thank-you message to %s (%s)", patient_name, phone_number)
-        result = whatsapp_service.send_message(phone_number, message)
+        db_cfg = _get_db_session()
+        cfg = None
+        try:
+            cfg = _get_template_config(db_cfg, owner_user_id)
+        finally:
+            db_cfg.close()
+        result = whatsapp_service.send_thank_you(
+            patient_name,
+            phone_number,
+            use_templates=cfg.use_templates if cfg else None,
+            template_name=cfg.thank_you_template if cfg else None,
+            language_code=cfg.language_code if cfg else None,
+        )
         if result["success"]:
             logger.info("Thank-you message sent to %s", patient_name)
             return {"success": True, "message_id": result.get("message_id")}

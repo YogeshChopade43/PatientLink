@@ -18,6 +18,8 @@ class Patient(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     deleted_at = Column(DateTime, nullable=True, index=True)
     deleted_by_user_id = Column(String, nullable=True)
+    consent_whatsapp = Column(Boolean, default=False)
+    consent_at = Column(DateTime, nullable=True)
 
     # Relationship to medicines
     medicines = relationship("Medicine", back_populates="patient")
@@ -70,3 +72,15 @@ class DoseLog(Base):
     taken_at = Column(DateTime, nullable=True)
     note = Column(String, default="")
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class TemplateConfig(Base):
+    __tablename__ = "template_configs"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
+    owner_user_id = Column(String, index=True, unique=True)
+    use_templates = Column(Boolean, default=True)
+    language_code = Column(String, default="en")
+    thank_you_template = Column(String, default="")
+    reminder_template = Column(String, default="")
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

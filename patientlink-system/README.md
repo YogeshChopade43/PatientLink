@@ -40,7 +40,6 @@ patientlink-system/
    ```
 4. Build and start the services:
    ```bash
-   cd docker
    docker-compose up --build -d
    ```
 
@@ -174,6 +173,24 @@ If readiness fails, inspect the returned `checks` object and fix those exact ite
 Note:
 - `ENABLE_BACKGROUND_TASKS=false` is suitable for local environments without Redis (reminders are processed directly).
 - `ENABLE_BACKGROUND_TASKS=true` is required for production queue mode (Redis + Celery worker/beat).
+- For official WhatsApp Cloud API business-initiated messages, configure template mode:
+  - `WHATSAPP_USE_TEMPLATES=true`
+  - `WA_TEMPLATE_THANK_YOU=<approved_template_name>`
+  - `WA_TEMPLATE_REMINDER=<approved_template_name>`
+  - `WA_TEMPLATE_LANGUAGE_CODE=en` (or your template language code)
+  - Verify go-live checklist endpoint: `GET /ops/whatsapp-go-live`
+
+Backup operations:
+- `GET /backup/list` lists server backup files.
+- `POST /backup/run-now` triggers immediate backup (Celery if enabled, sync fallback if disabled).
+- `POST /backup/restore-file` restores by filename from server backup directory.
+
+CI pipeline:
+- GitHub Actions workflow at `.github/workflows/ci.yml` runs:
+  - dependency install
+  - Django migrate/check
+  - backend unit tests
+  - frontend build
 
 ### Manual Production Setup
 

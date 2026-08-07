@@ -16,6 +16,7 @@ class MedicineCreate(MedicineBase):
 class Medicine(MedicineBase):
     id: str
     patient_id: str
+    start_date: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -24,6 +25,7 @@ class PatientBase(BaseModel):
     name: str
     whatsapp_number: str
     dob: str  # Date string in YYYY-MM-DD format
+    consent_whatsapp: bool = False
 
 class PatientCreate(PatientBase):
     medicines: List[MedicineCreate] = []
@@ -32,6 +34,7 @@ class PatientUpdate(BaseModel):
     name: Optional[str] = None
     whatsapp_number: Optional[str] = None
     dob: Optional[str] = None
+    consent_whatsapp: Optional[bool] = None
     medicines: Optional[List[MedicineCreate]] = None
 
 class Patient(PatientBase):
@@ -39,6 +42,7 @@ class Patient(PatientBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
     deleted_at: Optional[datetime] = None
+    consent_at: Optional[datetime] = None
     medicines: List[Medicine] = []
 
     class Config:
@@ -104,3 +108,22 @@ class DoseLog(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class TemplateConfig(BaseModel):
+    owner_user_id: str
+    use_templates: bool
+    language_code: str
+    thank_you_template: str
+    reminder_template: str
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class TemplateConfigUpdate(BaseModel):
+    use_templates: bool = True
+    language_code: str = "en"
+    thank_you_template: str = ""
+    reminder_template: str = ""

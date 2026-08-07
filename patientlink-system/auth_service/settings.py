@@ -1,6 +1,10 @@
 import os
 from datetime import timedelta
 from pathlib import Path
+try:
+    import sentry_sdk
+except Exception:
+    sentry_sdk = None
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -98,3 +102,10 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # CORS settings
 CORS_ALLOW_ALL_ORIGINS = True
+
+SENTRY_DSN = os.environ.get("SENTRY_DSN", "")
+if SENTRY_DSN and sentry_sdk:
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        traces_sample_rate=float(os.environ.get("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
+    )
